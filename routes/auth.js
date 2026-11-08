@@ -88,7 +88,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login user
+// Login or Auto-Register user
 router.post('/login', async (req, res) => {
   try {
     const { email, phone, password } = req.body;
@@ -100,52 +100,100 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const identifier = (email || phone || '').toLowerCase().trim();
+    const rawInput = (email || phone || '').trim();
+    if (!rawInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email or phone number'
+      });
+    }
 
-    // Find user by email or phone
-    const { data: users, error: findError } = await supabase
+    const isEmail = rawInput.includes('@');
+    const normalizedEmail = isEmail ? rawInput.toLowerCase() : null;
+    const normalizedPhone = !isEmail ? rawInput : null;
+
+    // Check if user exists
+    let query = supabase.from('users').select('*');
+    if (normalizedEmail && normalizedPhone) {
+      query = query.or(`email.eq.${normalizedEmail},phone.eq.${normalizedPhone}`);
+    } else if (normalizedEmail) {
+      query = query.eq('email', normalizedEmail);
+    } else {
+      query = query.eq('phone', normalizedPhone);
+    }
+
+    const { data: users, error: findError } = await query;
+    let user = users && users.length > 0 ? users[0] : null;
+
+    // If user exists, verify password and login
+    if (user) {
+      const isPasswordMatch = await bcrypt.compare(password, user.password);
+      if (!isPasswordMatch) {
+        return res.status(401).json({
+          success: false,
+          message: 'ভুল পাসওয়ার্ড! সঠিক পাসওয়ার্ড দিয়ে চেষ্টা করুন।'
+        });
+      }
+
+      const token = generateToken(user.id);
+      return res.json({
+        success: true,
+        message: 'লগইন সফল হয়েছে!',
+        token,
+        user: {
+          id: user.id,
+          _id: user.id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role
+        }
+      });
+    }
+
+    // If user does not exist, AUTO-REGISTER the user
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    const generatedName = normalizedEmail ? normalizedEmail.split('@')[0] : `User_${normalizedPhone.slice(-4)}`;
+
+    const { data: newUser, error: insertError } = await supabase
       .from('users')
-      .select('*')
-      .or(`email.eq.${identifier},phone.eq.${identifier}`);
+      .insert({
+        name: generatedName,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        password: hashedPassword,
+        role: 'customer',
+        is_verified: true,
+        purchases: [],
+        accessible_content: []
+      })
+      .select()
+      .single();
 
-    const user = users && users.length > 0 ? users[0] : null;
-
-    if (!user || !user.password) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
+    if (insertError) {
+      throw insertError;
     }
 
-    // Check password
-    const isPasswordMatch = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    const token = generateToken(user.id);
-
-    res.json({
+    const token = generateToken(newUser.id);
+    return res.status(201).json({
       success: true,
-      message: 'Login successful',
+      message: 'অ্যাকাউন্ট সফলভাবে তৈরি ও লগইন হয়েছে!',
       token,
       user: {
-        id: user.id,
-        _id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role
+        id: newUser.id,
+        _id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+        phone: newUser.phone,
+        role: newUser.role
       }
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Login failed',
+      message: 'Login/Register failed',
       error: error.message
     });
   }
