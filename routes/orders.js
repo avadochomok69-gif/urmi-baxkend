@@ -78,20 +78,6 @@ router.post('/', protect, uploadScreenshot.single('paymentScreenshot'), async (r
       });
     }
 
-    // Verify payment amount matches package price
-    if (Number(paymentInfo.amount) !== Number(package_.price)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payment amount does not match package price'
-      });
-    }
-
-    // Handle payment screenshot
-    let paymentScreenshotUrl = null;
-    if (req.file) {
-      paymentScreenshotUrl = `/uploads/screenshots/${req.file.filename}`;
-    }
-
     // Parse paymentInfo if it came as JSON string (multipart)
     let parsedPaymentInfo = paymentInfo;
     if (typeof paymentInfo === 'string') {
@@ -100,6 +86,18 @@ router.post('/', protect, uploadScreenshot.single('paymentScreenshot'), async (r
     let parsedCustomerInfo = customerInfo;
     if (typeof customerInfo === 'string') {
       try { parsedCustomerInfo = JSON.parse(customerInfo); } catch(e) {}
+    }
+
+    // Set order amount directly from the package price
+    const orderAmount = Number(package_.price) || 0;
+    if (parsedPaymentInfo && typeof parsedPaymentInfo === 'object') {
+      parsedPaymentInfo.amount = orderAmount;
+    }
+
+    // Handle payment screenshot
+    let paymentScreenshotUrl = null;
+    if (req.file) {
+      paymentScreenshotUrl = `/uploads/screenshots/${req.file.filename}`;
     }
 
     // Create order in Supabase
@@ -236,6 +234,34 @@ router.get('/access/:packageId', protect, async (req, res) => {
     });
   } catch (error) {
     res.json({ success: true, hasAccess: false, accessInfo: null });
+  }
+});
+
+// Get all granted packages for logged-in user (My Packages)
+router.get('/my-packages/list', protect, async (req, res) => {
+  try {
+    const { data: accesses, error } = await supabase
+      .from('user_package_access')
+      .select('package_id, granted_at, packages(*)')
+      .eq('user_id', req.user.id);
+
+    if (error) throw error;
+
+    const packages = (accesses || [])
+      .map(a => a.packages)
+      .filter(Boolean)
+      .map(mapPackage);
+
+    res.json({
+      success: true,
+      packages
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user packages',
+      error: error.message
+    });
   }
 });
 
