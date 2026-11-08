@@ -47,9 +47,16 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-app.use('/public', express.static(path.join(__dirname, '../public')));
+// Serve static files (support both backend/uploads and ../uploads)
+const uploadsPath = path.join(__dirname, 'uploads');
+const fallbackUploadsPath = path.join(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsPath));
+app.use('/uploads', express.static(fallbackUploadsPath));
+
+const publicPath = path.join(__dirname, 'public');
+const fallbackPublicPath = path.join(__dirname, '../public');
+app.use('/public', express.static(publicPath));
+app.use('/public', express.static(fallbackPublicPath));
 
 // Supabase Connection Verification
 (async () => {
